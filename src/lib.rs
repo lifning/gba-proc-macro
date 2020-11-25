@@ -170,6 +170,8 @@ pub fn phantom_fields(input: TokenStream) -> TokenStream {
         let mask_name = Ident::new(&format!("{}_MASK", name.to_uppercase()), Span::call_site());
         let read_name = Ident::new(&name.clone(), Span::call_site());
         let with_name = Ident::new(&format!("with_{}", name), Span::call_site());
+        let a32_read_name = Ident::new(&format!("a32_{}", name), Span::call_site());
+        let a32_with_name = Ident::new(&format!("a32_with_{}", name), Span::call_site());
         let width = (end - start) + 1;
         out_text.push_str(&format!(
           "{}\n",
@@ -203,7 +205,39 @@ pub fn phantom_fields(input: TokenStream) -> TokenStream {
           "{}\n",
           TokenStream::from(quote! {
             #[allow(missing_docs)]
+            #[cfg_attr(target_arch = "arm", instruction_set(arm::a32))]
+            pub fn #a32_read_name(self) -> #enum_type
+          })
+        ));
+        out_text.push('{');
+        out_text.push_str(&format!(
+          "{}\n",
+          TokenStream::from(quote! {
+            match (self.0 & Self::#mask_name) >> #start
+          })
+        ));
+        out_text.push('{');
+        let enum_type_string = enum_type.to_string();
+        for (i, variant) in variant_list.iter().enumerate() {
+          out_text.push_str(&format!("{} => {}::{},\n", i, enum_type_string, variant));
+        }
+        if variant_list.len() == (1 << (width - 1)) {
+          out_text.push_str("_ => core::hint::unreachable_unchecked(),");
+        } else {
+          out_text.push_str("_ => unreachable!(),");
+        }
+        out_text.push_str("} }\n");
+        out_text.push_str(&format!(
+          "{}\n",
+          TokenStream::from(quote! {
+            #[allow(missing_docs)]
             pub const fn #with_name(self, #read_name: #enum_type) -> Self {
+              Self((self.0 & !Self::#mask_name) | (((#read_name as #self_member_type) << #start) & Self::#mask_name))
+            }
+
+            #[allow(missing_docs)]
+            #[cfg_attr(target_arch = "arm", instruction_set(arm::a32))]
+            pub const fn #a32_with_name(self, #read_name: #enum_type) -> Self {
               Self((self.0 & !Self::#mask_name) | (((#read_name as #self_member_type) << #start) & Self::#mask_name))
             }
           })
@@ -221,11 +255,14 @@ pub fn phantom_fields(input: TokenStream) -> TokenStream {
         let mask_name = Ident::new(&format!("{}_MASK", name.to_uppercase()), Span::call_site());
         let read_name = Ident::new(&name.clone(), Span::call_site());
         let with_name = Ident::new(&format!("with_{}", name), Span::call_site());
+        let a32_read_name = Ident::new(&format!("a32_{}", name), Span::call_site());
+        let a32_with_name = Ident::new(&format!("a32_with_{}", name), Span::call_site());
         let width = (end - start) + 1;
         out_text.push_str(&format!(
           "{}\n",
           TokenStream::from(quote! {
             #[allow(clippy::identity_op)]
+            #[inline(always)]
             pub const #mask_name: #self_member_type = ((1<<(#width))-1) << #start;
 
             #[allow(missing_docs)]
@@ -234,7 +271,19 @@ pub fn phantom_fields(input: TokenStream) -> TokenStream {
             }
 
             #[allow(missing_docs)]
+            #[cfg_attr(target_arch = "arm", instruction_set(arm::a32))]
+            pub const fn #a32_read_name(self) -> #self_member_type {
+              (self.0 & Self::#mask_name) >> #start
+            }
+
+            #[allow(missing_docs)]
             pub const fn #with_name(self, #read_name: #self_member_type) -> Self {
+              Self((self.0 & !Self::#mask_name) | ((#read_name << #start) & Self::#mask_name))
+            }
+
+            #[allow(missing_docs)]
+            #[cfg_attr(target_arch = "arm", instruction_set(arm::a32))]
+            pub const fn #a32_with_name(self, #read_name: #self_member_type) -> Self {
               Self((self.0 & !Self::#mask_name) | ((#read_name << #start) & Self::#mask_name))
             }
           })
@@ -247,6 +296,8 @@ pub fn phantom_fields(input: TokenStream) -> TokenStream {
         let const_name = Ident::new(&format!("{}_BIT", name.to_uppercase()), Span::call_site());
         let read_name = Ident::new(&name.clone(), Span::call_site());
         let with_name = Ident::new(&format!("with_{}", name), Span::call_site());
+        let a32_read_name = Ident::new(&format!("a32_{}", name), Span::call_site());
+        let a32_with_name = Ident::new(&format!("a32_with_{}", name), Span::call_site());
         out_text.push_str(&format!(
           "{}\n",
           TokenStream::from(quote! {
@@ -258,9 +309,22 @@ pub fn phantom_fields(input: TokenStream) -> TokenStream {
               (self.0 & Self::#const_name) != 0
             }
 
+            #[allow(missing_docs)]
+            #[cfg_attr(target_arch = "arm", instruction_set(arm::a32))]
+            pub const fn #a32_read_name(self) -> bool {
+              (self.0 & Self::#const_name) != 0
+            }
+
             // https://graphics.stanford.edu/~seander/bithacks.html#ConditionalSetOrClearBitsWithoutBranching
             #[allow(missing_docs)]
             pub const fn #with_name(self, bit: bool) -> Self {
+              Self(self.0 ^ (((#self_member_type::wrapping_sub(0, bit as #self_member_type) ^ self.0) & Self::#const_name)))
+            }
+
+            // https://graphics.stanford.edu/~seander/bithacks.html#ConditionalSetOrClearBitsWithoutBranching
+            #[allow(missing_docs)]
+            #[cfg_attr(target_arch = "arm", instruction_set(arm::a32))]
+            pub const fn #a32_with_name(self, bit: bool) -> Self {
               Self(self.0 ^ (((#self_member_type::wrapping_sub(0, bit as #self_member_type) ^ self.0) & Self::#const_name)))
             }
           })
